@@ -6,6 +6,31 @@ use crate::{
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter, Level, SpanLabel, SpanStyle};
 
+macro_rules! true_or_return_none {
+    ($a: expr) => {
+        if (!$a) {
+            return None;
+        }
+    };
+}
+
+macro_rules! if_none_return_none {
+    ($a: expr) => {
+        if ($a.is_none()) {
+            return None;
+        }
+    };
+}
+
+macro_rules! check_eof {
+    ($self: expr) => {
+        if $self.token.is_none() {
+            $self.unexpected_eof();
+            return None;
+        }
+    };
+}
+
 pub struct Parser<'a> {
     source: &'a str,
     filename: &'a str,
@@ -50,21 +75,12 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_statement(&mut self) -> Option<Statement> {
-        if self.token.is_none() {
-            self.unexpected_eof();
-            return None;
-        }
+        check_eof!(self);
 
-        let result = match self.token.as_ref().unwrap().raw {
+        match self.token.as_ref().unwrap().raw {
             RawToken::Let => self.parse_let_statement(),
             _ => self.parse_expression_statement(),
-        };
-
-        if result.is_none() {
-            return None;
         }
-
-        result
     }
 
     fn parse_let_statement(&mut self) -> Option<Statement> {
@@ -72,48 +88,37 @@ impl<'a> Parser<'a> {
 
         self.consume_token();
 
-        if !self.check_token(
+        true_or_return_none!(self.check_token(
             RawToken::Identifier,
             "expected name of variable in let statement".to_owned(),
-        ) {
-            return None;
-        }
+        ));
 
         let name = self.token.as_ref().unwrap().clone().literal;
         let name_span = self.token.as_ref().unwrap().clone().span;
 
         self.consume_token();
 
-        if !self.check_token(
+        true_or_return_none!(self.check_token(
             RawToken::Assign,
             "help: consider adding '=' in the let statement".to_owned(),
-        ) {
-            return None;
-        }
+        ));
 
         self.consume_token();
 
         let expression_result = self.parse_expression();
 
-        if expression_result.is_none() {
-            return None;
-        }
+        if_none_return_none!(expression_result);
 
         let (expression, expression_span) = expression_result.unwrap();
 
-        if self.token.as_ref().is_none() {
-            self.unexpected_eof();
-            return None;
-        }
+        check_eof!(self);
 
         let end = self.token.as_ref().unwrap().span.end;
 
-        if !self.check_token(
+        true_or_return_none!(self.check_token(
             RawToken::Semicolon,
             "help: consider adding ';' at the end of the let statement".to_owned(),
-        ) {
-            return None;
-        }
+        ));
 
         self.consume_token();
 
@@ -129,20 +134,16 @@ impl<'a> Parser<'a> {
     fn parse_expression_statement(&mut self) -> Option<Statement> {
         let expression_result = self.parse_expression();
 
-        if expression_result.is_none() {
-            return None;
-        }
+        if_none_return_none!(expression_result);
 
         let (expression, expression_span) = expression_result.unwrap();
 
         let start = expression_span.start;
 
-        if !self.check_token(
+        true_or_return_none!(self.check_token(
             RawToken::Semicolon,
             "help: consider adding ';' at the end of expression statement".to_owned(),
-        ) {
-            return None;
-        }
+        ));
 
         let end = self.token.as_ref().unwrap().span.end;
 
@@ -154,10 +155,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self) -> Option<(Expression, ast::Span)> {
-        if self.token.is_none() {
-            self.unexpected_eof();
-            return None;
-        }
+        check_eof!(self);
 
         match self.token.as_ref().unwrap().raw {
             RawToken::Identifier => {
@@ -180,25 +178,18 @@ impl<'a> Parser<'a> {
 
                 let expression_result = self.parse_expression();
 
-                if expression_result.is_none() {
-                    return None;
-                }
+                if_none_return_none!(expression_result);
 
                 let (expression, expression_span) = expression_result.unwrap();
 
-                if !self.check_token(
+                true_or_return_none!(self.check_token(
                     RawToken::Rparen,
                     "help: consider adding ')' at the end of parenthesised expression".to_owned(),
-                ) {
-                    return None;
-                }
+                ));
 
                 self.consume_token();
 
-                if self.token.is_none() {
-                    self.unexpected_eof();
-                    return None;
-                }
+                check_eof!(self);
 
                 let end = self.token.as_ref()?.clone().span.start;
                 Some((
@@ -213,36 +204,29 @@ impl<'a> Parser<'a> {
                 let start = self.token.as_ref().unwrap().clone().span.start;
                 self.consume_token();
 
-                if !self.check_token(RawToken::Identifier, "expected argument name".to_owned()) {
-                    return None;
-                }
+                true_or_return_none!(
+                    self.check_token(RawToken::Identifier, "expected argument name".to_owned())
+                );
 
                 let name = self.token.as_ref().unwrap().clone().literal;
                 let name_span = self.token.as_ref().unwrap().clone().span;
 
                 self.consume_token();
 
-                if !self.check_token(
+                true_or_return_none!(self.check_token(
                     RawToken::RightArrow,
                     "help: consider adding '->'".to_owned(),
-                ) {
-                    return None;
-                }
+                ));
 
                 self.consume_token();
 
                 let expression_result = self.parse_expression();
 
-                if expression_result.is_none() {
-                    return None;
-                }
+                if_none_return_none!(expression_result);
 
                 let (expression, expression_span) = expression_result.unwrap();
 
-                if self.token.is_none() {
-                    self.unexpected_eof();
-                    return None;
-                }
+                check_eof!(self);
 
                 let end = self.token.as_ref()?.clone().span.start;
 
