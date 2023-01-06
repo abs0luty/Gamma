@@ -14,14 +14,6 @@ macro_rules! true_or_return_none {
     };
 }
 
-macro_rules! if_none_return_none {
-    ($a: expr) => {
-        if ($a.is_none()) {
-            return None;
-        }
-    };
-}
-
 macro_rules! check_eof {
     ($self: expr) => {
         if $self.token.is_none() {
@@ -105,11 +97,7 @@ impl<'a> Parser<'a> {
 
         self.consume_token();
 
-        let expression_result = self.parse_expression();
-
-        if_none_return_none!(expression_result);
-
-        let (expression, expression_span) = expression_result.unwrap();
+        let (expression, expression_span) = self.parse_expression()?;
 
         check_eof!(self);
 
@@ -132,11 +120,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression_statement(&mut self) -> Option<Statement> {
-        let expression_result = self.parse_expression();
-
-        if_none_return_none!(expression_result);
-
-        let (expression, expression_span) = expression_result.unwrap();
+        let (expression, expression_span) = self.parse_expression()?;
 
         let start = expression_span.start;
 
@@ -176,11 +160,7 @@ impl<'a> Parser<'a> {
                 let start = self.token.as_ref().unwrap().clone().span.start;
                 self.consume_token();
 
-                let expression_result = self.parse_expression();
-
-                if_none_return_none!(expression_result);
-
-                let (expression, expression_span) = expression_result.unwrap();
+                let (expression, expression_span) = self.parse_expression()?;
 
                 true_or_return_none!(self.check_token(
                     RawToken::Rparen,
@@ -220,11 +200,7 @@ impl<'a> Parser<'a> {
 
                 self.consume_token();
 
-                let expression_result = self.parse_expression();
-
-                if_none_return_none!(expression_result);
-
-                let (expression, expression_span) = expression_result.unwrap();
+                let (expression, expression_span) = self.parse_expression()?;
 
                 check_eof!(self);
 
