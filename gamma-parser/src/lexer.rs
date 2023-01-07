@@ -9,8 +9,11 @@ pub enum RawToken {
     #[token("$")]
     Dollar,
 
-    #[token("->")]
+    #[token("=>")]
     RightArrow,
+
+    #[token(".")]
+    Period,
 
     #[token("=")]
     Assign,

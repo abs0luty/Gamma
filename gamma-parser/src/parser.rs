@@ -6,9 +6,9 @@ use crate::{
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter, Level, SpanLabel, SpanStyle};
 
-macro_rules! true_or_return_none {
-    ($a: expr) => {
-        if (!$a) {
+macro_rules! check_token {
+    ($self: expr, $rawtoken: expr, $msg: expr) => {
+        if !$self.check_token($rawtoken, $msg) {
             return None;
         }
     };
@@ -23,6 +23,21 @@ macro_rules! check_eof {
     };
 }
 
+/// Grammar for Gamma:
+///
+/// Program   ::= Statement* EOF
+/// Statement ::= (Let | Expression) ";"
+/// Let       ::= "let" Identifier "=" Expression
+/// Expression ::= Abstraction
+///                | Application
+///                | Identifier
+///                | "(" Expression ")"
+/// Application ::= Function Argument
+/// Function ::= Identifier
+///            | Application
+///            | "(" Expression ")"
+/// Argument ::= Identifier
+///            | "(" Expression ")"
 pub struct Parser<'a> {
     source: &'a str,
     filename: &'a str,
@@ -80,33 +95,34 @@ impl<'a> Parser<'a> {
 
         self.consume_token();
 
-        true_or_return_none!(self.check_token(
+        check_token!(
+            self,
             RawToken::Identifier,
-            "expected name of variable in let statement".to_owned(),
-        ));
+            "expected name of variable in the let statement".to_owned()
+        );
 
         let name = self.token.as_ref().unwrap().clone().literal;
         let name_span = self.token.as_ref().unwrap().clone().span;
 
         self.consume_token();
 
-        true_or_return_none!(self.check_token(
+        check_token!(
+            self,
             RawToken::Assign,
-            "help: consider adding '=' in the let statement".to_owned(),
-        ));
+            "help: consider adding '=' in the let statement".to_owned()
+        );
 
         self.consume_token();
 
         let (expression, expression_span) = self.parse_expression()?;
 
-        check_eof!(self);
+        check_token!(
+            self,
+            RawToken::Semicolon,
+            "help: consider adding ';' at the end of the let statement".to_owned()
+        );
 
         let end = self.token.as_ref().unwrap().span.end;
-
-        true_or_return_none!(self.check_token(
-            RawToken::Semicolon,
-            "help: consider adding ';' at the end of the let statement".to_owned(),
-        ));
 
         self.consume_token();
 
@@ -124,12 +140,15 @@ impl<'a> Parser<'a> {
 
         let start = expression_span.start;
 
-        true_or_return_none!(self.check_token(
+        check_token!(
+            self,
             RawToken::Semicolon,
-            "help: consider adding ';' at the end of expression statement".to_owned(),
-        ));
+            "help: consider adding ';' at the end of expression statement".to_owned()
+        );
 
         let end = self.token.as_ref().unwrap().span.end;
+
+        self.consume_token();
 
         Some(Statement::Expression {
             expression: expression,
@@ -138,84 +157,152 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_name_expression(&mut self) -> Option<(Expression, ast::Span)> {
+        let name = self.token.as_ref().unwrap().clone().literal;
+        let name_span = self.token.as_ref().unwrap().clone().span;
+
+        self.consume_token();
+
+        Some((
+            ast::Expression::Var {
+                name: name,
+                name_span: name_span.clone(),
+            },
+            name_span,
+        ))
+    }
+
+    fn parse_paren_expression(&mut self) -> Option<(Expression, ast::Span)> {
+        let start = self.token.as_ref().unwrap().clone().span.start;
+        self.consume_token();
+
+        let (expression, expression_span) = self.parse_expression()?;
+
+        check_token!(
+            self,
+            RawToken::Rparen,
+            "help: consider adding ')' at the end of parenthesised expression".to_owned()
+        );
+
+        self.consume_token();
+
+        check_eof!(self);
+
+        let end = self.token.as_ref()?.clone().span.start;
+        Some((
+            Expression::Paren {
+                expression: Box::new(expression),
+                expression_span: expression_span,
+            },
+            start..end,
+        ))
+    }
+
+    fn parse_abstraction_expression(&mut self) -> Option<(Expression, ast::Span)> {
+        let start = self.token.as_ref().unwrap().clone().span.start;
+        self.consume_token();
+
+        check_token!(
+            self,
+            RawToken::Identifier,
+            "expected argument name".to_owned()
+        );
+
+        let name = self.token.as_ref().unwrap().clone().literal;
+        let name_span = self.token.as_ref().unwrap().clone().span;
+
+        self.consume_token();
+
+        if self.token.is_some() && self.token.as_ref().unwrap().raw == RawToken::Period {
+            Emitter::stderr(ColorConfig::Always, Some(&self.codemap)).emit(&[Diagnostic {
+                        level: Level::Warning,
+                        message: "use '=>' in abstractions".to_owned(),
+                        spans: vec![SpanLabel {
+                            span: self.token_span(&self.token),
+                            style: SpanStyle::Primary,
+                            label: Some("help: use '.' instead of '=>' because Gamma uses different syntax rather than usual one in Lambda calculus.".to_owned()),
+                        }],
+                        code: Some("E001".to_owned()),
+                    }]);
+        } else {
+            check_token!(
+                self,
+                RawToken::RightArrow,
+                "help: consider adding '=>'".to_owned()
+            );
+        }
+
+        self.consume_token();
+
+        let (expression, expression_span) = self.parse_expression()?;
+
+        check_eof!(self);
+
+        let end = self.token.as_ref()?.clone().span.start;
+
+        Some((
+            Expression::Abstraction {
+                name: name,
+                name_span: name_span,
+                expression: Box::new(expression),
+                expression_span: expression_span,
+            },
+            start..end,
+        ))
+    }
+
+    fn parse_application(&mut self) -> Option<(Expression, ast::Span)> {
+        let mut expressions = vec![];
+        loop {
+            match self.token.as_ref().unwrap().raw {
+                RawToken::Identifier => {
+                    expressions.push(self.parse_name_expression()?);
+                }
+                RawToken::Lparen => {
+                    expressions.push(self.parse_paren_expression()?);
+                }
+                _ => {
+                    return match expressions.len() {
+                        0 => {
+                            self.unexpected_token("do not write empty expressions".to_owned());
+                            None
+                        }
+                        1 => Some(expressions[0].to_owned()),
+                        _ => {
+                            let mut accumulator = expressions.pop()?;
+                            let start = accumulator.1.start;
+                            let mut x = None;
+                            while !expressions.is_empty() {
+                                x = expressions.pop();
+                                let (rhs, rhs_span) = accumulator;
+                                let (lhs, lhs_span) = x.unwrap();
+                                let end = rhs_span.end;
+                                accumulator = (
+                                    Expression::Apply {
+                                        lhs: Box::new(lhs),
+                                        lhs_span,
+                                        rhs: Box::new(rhs),
+                                        rhs_span,
+                                    },
+                                    start..end,
+                                )
+                            }
+
+                            Some(accumulator)
+                        }
+                    };
+                }
+            }
+        }
+    }
+
     fn parse_expression(&mut self) -> Option<(Expression, ast::Span)> {
         check_eof!(self);
 
         match self.token.as_ref().unwrap().raw {
-            RawToken::Identifier => {
-                let name = self.token.as_ref().unwrap().clone().literal;
-                let name_span = self.token.as_ref().unwrap().clone().span;
-
-                self.consume_token();
-
-                Some((
-                    ast::Expression::Var {
-                        name: name,
-                        name_span: name_span.clone(),
-                    },
-                    name_span,
-                ))
-            }
-            RawToken::Lparen => {
-                let start = self.token.as_ref().unwrap().clone().span.start;
-                self.consume_token();
-
-                let (expression, expression_span) = self.parse_expression()?;
-
-                true_or_return_none!(self.check_token(
-                    RawToken::Rparen,
-                    "help: consider adding ')' at the end of parenthesised expression".to_owned(),
-                ));
-
-                self.consume_token();
-
-                check_eof!(self);
-
-                let end = self.token.as_ref()?.clone().span.start;
-                Some((
-                    Expression::Paren {
-                        expression: Box::new(expression),
-                        expression_span: expression_span,
-                    },
-                    start..end,
-                ))
-            }
-            RawToken::Lambda => {
-                let start = self.token.as_ref().unwrap().clone().span.start;
-                self.consume_token();
-
-                true_or_return_none!(
-                    self.check_token(RawToken::Identifier, "expected argument name".to_owned())
-                );
-
-                let name = self.token.as_ref().unwrap().clone().literal;
-                let name_span = self.token.as_ref().unwrap().clone().span;
-
-                self.consume_token();
-
-                true_or_return_none!(self.check_token(
-                    RawToken::RightArrow,
-                    "help: consider adding '->'".to_owned(),
-                ));
-
-                self.consume_token();
-
-                let (expression, expression_span) = self.parse_expression()?;
-
-                check_eof!(self);
-
-                let end = self.token.as_ref()?.clone().span.start;
-
-                Some((
-                    Expression::Abstraction {
-                        name: name,
-                        name_span: name_span,
-                        expression: Box::new(expression),
-                        expression_span: expression_span,
-                    },
-                    start..end,
-                ))
-            }
+            RawToken::Lambda => self.parse_abstraction_expression(),
+            RawToken::Lparen => self.parse_application(),
+            RawToken::Identifier => self.parse_application(),
             _ => {
                 self.unexpected_token(
                     "expression must start with identifier, 'lambda', '\\' or '('".to_owned(),
@@ -278,17 +365,19 @@ impl<'a> Parser<'a> {
     }
 
     pub fn check_token(&mut self, expected: RawToken, message: String) -> bool {
-        if self.token.is_none() {
-            self.unexpected_eof();
-            return false;
-        }
-
-        if self.token.as_ref().unwrap().raw != expected {
+        if self.token.is_none() || self.token.as_ref().unwrap().raw != expected {
             Emitter::stderr(ColorConfig::Always, Some(&self.codemap)).emit(&[Diagnostic {
                 level: Level::Error,
                 message: "parsing error found".to_owned(),
                 spans: vec![SpanLabel {
-                    span: self.token_span(&self.token),
+                    span: if self.token.is_none() {
+                        match self.previous_token_span.as_ref() {
+                            Some(_) => self.span(self.previous_token_span.as_ref().unwrap()),
+                            None => self.file_span.subspan(0, 1),
+                        }
+                    } else {
+                        self.token_span(&self.token)
+                    },
                     style: SpanStyle::Primary,
                     label: Some(message),
                 }],
@@ -330,7 +419,7 @@ mod parser_tests {
     #[test]
     fn let_lambda() {
         assert_eq!(
-            Parser::new("let a = \\x -> x;", "<stdin>").parse()[0],
+            Parser::new("let a = \\x => x;", "<stdin>").parse()[0],
             Let {
                 name: "a".to_string(),
                 name_span: 4..5,
