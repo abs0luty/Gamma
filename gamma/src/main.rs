@@ -1,25 +1,25 @@
-use std::process::exit;
+use std::{env, fs, process::exit};
 
-use gamma_parser::parser::Parser;
+mod eval;
+
+use eval::Evaluator;
 
 fn main() {
-    let rl = rustyline::Editor::<()>::new();
-    match rl {
-        Ok(mut e) => loop {
-            match e.readline(">>") {
-                Ok(line) => {
-                    let mut parser = Parser::new(line.as_str(), "<stdin>");
-                    let ast = parser.parse();
-                    println!("{:?}", ast);
-                }
-                Err(_) => {
-                    println!("bye");
-                    exit(0);
-                }
-            }
-        },
-        Err(err) => {
-            panic!("{}", err)
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("usage: gamma <filename>");
+        exit(1);
+    }
+
+    let filename = args[1].as_str();
+    match fs::read_to_string(filename) {
+        Ok(content) => {
+            let mut exec = Evaluator::new(content.as_str(), filename);
+            exec.eval();
+        }
+        Err(_) => {
+            eprintln!("unable to read file");
+            exit(1);
         }
     }
 }

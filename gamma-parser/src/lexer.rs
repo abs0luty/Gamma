@@ -2,7 +2,7 @@ use logos::Logos;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 pub enum RawToken {
-    #[regex(r"[ \t\n\f]+", logos::skip)]
+    #[regex(r"[ \t\n\r\f]+", logos::skip)]
     #[token(";")]
     Semicolon,
 

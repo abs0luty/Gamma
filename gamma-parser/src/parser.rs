@@ -1,8 +1,5 @@
+use crate::ast::{self, *};
 use crate::lexer::{RawToken, Token};
-use crate::{
-    ast::{self, *},
-    lexer,
-};
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter, Level, SpanLabel, SpanStyle};
 
@@ -39,13 +36,11 @@ macro_rules! check_eof {
 /// Argument ::= Identifier
 ///            | "(" Expression ")"
 pub struct Parser<'a> {
-    source: &'a str,
-    filename: &'a str,
+    pub codemap: CodeMap,
+    pub file_span: codemap::Span,
     previous_token_span: Option<ast::Span>,
     token: Option<Token>,
     tokens_iterator: Box<dyn Iterator<Item = Token> + 'a>,
-    file_span: codemap::Span,
-    codemap: CodeMap,
 }
 
 impl<'a> Parser<'a> {
@@ -56,8 +51,6 @@ impl<'a> Parser<'a> {
             .span;
 
         let mut parser = Self {
-            source: source,
-            filename: filename,
             codemap: codemap,
             previous_token_span: None,
             token: None,
@@ -220,9 +213,9 @@ impl<'a> Parser<'a> {
                         spans: vec![SpanLabel {
                             span: self.token_span(&self.token),
                             style: SpanStyle::Primary,
-                            label: Some("help: use '.' instead of '=>' because Gamma uses different syntax rather than usual one in Lambda calculus.".to_owned()),
+                            label: Some("help: use '=>' instead of '.' because Gamma uses different syntax rather than usual one in Lambda calculus.".to_owned()),
                         }],
-                        code: Some("E001".to_owned()),
+                        code: Some("W002".to_owned()),
                     }]);
         } else {
             check_token!(
@@ -254,6 +247,8 @@ impl<'a> Parser<'a> {
     fn parse_application(&mut self) -> Option<(Expression, ast::Span)> {
         let mut expressions = vec![];
         loop {
+            check_eof!(self);
+
             match self.token.as_ref().unwrap().raw {
                 RawToken::Identifier => {
                     expressions.push(self.parse_name_expression()?);
@@ -270,12 +265,16 @@ impl<'a> Parser<'a> {
                         1 => Some(expressions[0].to_owned()),
                         _ => {
                             let mut accumulator = expressions.pop()?;
-                            let start = accumulator.1.start;
-                            let mut x = None;
+                            let start_defined = false;
+                            let mut start = 0;
                             while !expressions.is_empty() {
-                                x = expressions.pop();
                                 let (rhs, rhs_span) = accumulator;
-                                let (lhs, lhs_span) = x.unwrap();
+                                let (lhs, lhs_span) = expressions.pop().unwrap();
+
+                                if !start_defined {
+                                    start = lhs_span.start;
+                                }
+
                                 let end = rhs_span.end;
                                 accumulator = (
                                     Expression::Apply {
