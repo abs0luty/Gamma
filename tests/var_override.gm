@@ -1,2 +1,2 @@
-let i = \x => x;
-let i = i i;
+let a=  \x => x;
+let a = a;

@@ -2,6 +2,7 @@ use std::{env, fs, process::exit};
 
 mod eval;
 
+use codemap::CodeMap;
 use eval::Evaluator;
 
 fn main() {
@@ -14,8 +15,11 @@ fn main() {
     let filename = args[1].as_str();
     match fs::read_to_string(filename) {
         Ok(content) => {
-            let mut exec = Evaluator::new(content.as_str(), filename);
+            let mut codemap = CodeMap::new();
+            let mut exec = Evaluator::new(content.as_str(), filename, &mut codemap);
             exec.eval();
+            //
+            // }
         }
         Err(_) => {
             eprintln!("unable to read file");

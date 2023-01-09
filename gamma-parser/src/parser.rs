@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use crate::ast::{self, *};
 use crate::lexer::{RawToken, Token};
 use codemap::CodeMap;
@@ -36,27 +38,31 @@ macro_rules! check_eof {
 /// Argument ::= Identifier
 ///            | "(" Expression ")"
 pub struct Parser<'a> {
-    pub codemap: CodeMap,
+    pub codemap: &'a CodeMap,
     pub file_span: codemap::Span,
+    pub emitter: Emitter<'a>,
     previous_token_span: Option<ast::Span>,
     token: Option<Token>,
     tokens_iterator: Box<dyn Iterator<Item = Token> + 'a>,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(source: &'a str, filename: &'a str) -> Parser<'a> {
-        let mut codemap = CodeMap::new();
+    pub fn new(source: &'a str, filename: &'a str, codemap: &'a mut CodeMap) -> Parser<'a> {
         let file_span = codemap
             .add_file(filename.to_owned(), source.to_owned())
             .span;
 
+        let codemap_imut: &_ = codemap;
+
         let mut parser = Self {
-            codemap: codemap,
+            codemap: codemap_imut,
             previous_token_span: None,
             token: None,
             file_span: file_span,
+            emitter: Emitter::stderr(ColorConfig::Always, Some(codemap_imut)),
             tokens_iterator: Box::new(crate::lexer::lex(source)),
         };
+
         parser.consume_token();
         parser
     }
@@ -207,7 +213,7 @@ impl<'a> Parser<'a> {
         self.consume_token();
 
         if self.token.is_some() && self.token.as_ref().unwrap().raw == RawToken::Period {
-            Emitter::stderr(ColorConfig::Always, Some(&self.codemap)).emit(&[Diagnostic {
+            self.emitter.emit(&[Diagnostic {
                         level: Level::Warning,
                         message: "use '=>' in abstractions".to_owned(),
                         spans: vec![SpanLabel {
@@ -335,7 +341,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn unexpected_eof(&mut self) {
-        Emitter::stderr(ColorConfig::Always, Some(&self.codemap)).emit(&[Diagnostic {
+        self.emitter.emit(&[Diagnostic {
             level: Level::Error,
             spans: vec![SpanLabel {
                 span: match self.previous_token_span.as_ref() {
@@ -351,7 +357,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn unexpected_token(&mut self, message: String) {
-        Emitter::stderr(ColorConfig::Always, Some(&self.codemap)).emit(&[Diagnostic {
+        self.emitter.emit(&[Diagnostic {
             level: Level::Error,
             spans: vec![SpanLabel {
                 span: self.token_span(&self.token),
@@ -365,7 +371,7 @@ impl<'a> Parser<'a> {
 
     pub fn check_token(&mut self, expected: RawToken, message: String) -> bool {
         if self.token.is_none() || self.token.as_ref().unwrap().raw != expected {
-            Emitter::stderr(ColorConfig::Always, Some(&self.codemap)).emit(&[Diagnostic {
+            self.emitter.emit(&[Diagnostic {
                 level: Level::Error,
                 message: "parsing error found".to_owned(),
                 spans: vec![SpanLabel {
@@ -395,13 +401,14 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod parser_tests {
     use super::Parser;
+    use crate::parser::CodeMap;
     use crate::parser::Expression::*;
     use crate::parser::Statement::*;
 
     #[test]
     fn let_id() {
         assert_eq!(
-            Parser::new("let a = x;", "<stdin>").parse()[0],
+            Parser::new("let a = x;", "<stdin>", &mut CodeMap::new()).parse()[0],
             Let {
                 name: "a".to_string(),
                 name_span: 4..5,
@@ -418,7 +425,7 @@ mod parser_tests {
     #[test]
     fn let_lambda() {
         assert_eq!(
-            Parser::new("let a = \\x => x;", "<stdin>").parse()[0],
+            Parser::new("let a = \\x => x;", "<stdin>", &mut CodeMap::new()).parse()[0],
             Let {
                 name: "a".to_string(),
                 name_span: 4..5,

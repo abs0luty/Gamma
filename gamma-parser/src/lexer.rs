@@ -32,7 +32,7 @@ pub enum RawToken {
     #[token(")")]
     Rparen,
 
-    #[regex(r"(\p{XID_Continue})*")]
+    #[regex(r"[_0-9a-zA-Z]+")]
     Identifier,
 
     #[error]

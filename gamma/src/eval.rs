@@ -1,41 +1,53 @@
 use codemap::CodeMap;
 use codemap_diagnostic::{ColorConfig, Diagnostic, Emitter, Level, SpanLabel, SpanStyle};
 use gamma_parser::{ast, parser::Parser};
-use std::collections::HashMap;
-
+use std::io::Write;
+use std::{collections::HashMap, process::exit};
+use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 type Context = HashMap<String, (ast::Span, ast::Expression, ast::Span)>;
 
-pub struct Evaluator {
+pub struct Evaluator<'a> {
     file_span: codemap::Span,
-    codemap: CodeMap,
     context: Context,
     ast: ast::AST,
+    emitter: Emitter<'a>,
 }
 
-impl Evaluator {
-    pub fn new(source: &str, filename: &str) -> Self {
+impl<'a> Evaluator<'a> {
+    pub fn new(source: &'a str, filename: &'a str, codemap: &'a mut CodeMap) -> Self {
         let context = HashMap::new();
-        let mut parser = Parser::new(source, filename);
+        let mut parser = Parser::new(source, filename, codemap);
         let ast = parser.parse();
 
         let file_span = parser.file_span;
-        let codemap = parser.codemap;
+        let emitter = Emitter::stderr(ColorConfig::Always, Some(parser.codemap));
 
         Self {
             file_span,
-            codemap,
             context,
             ast,
+            emitter,
         }
     }
 
-    pub fn eval(&mut self) {
+    pub fn eval(&mut self) -> bool {
         for statement in self.ast.to_owned() {
-            self.eval_statement(statement);
+            if !self.eval_statement(statement) {
+                let mut stdout = StandardStream::stdout(ColorChoice::Always);
+                stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true));
+                writeln!(
+                    &mut stdout,
+                    "error: aborting due to error occured in execution process"
+                );
+                stdout.set_color(ColorSpec::new().set_fg(None));
+                return false;
+            }
         }
+
+        true
     }
 
-    fn eval_statement(&mut self, statement: ast::Statement) {
+    fn eval_statement(&mut self, statement: ast::Statement) -> bool {
         match statement {
             ast::Statement::Let {
                 name,
@@ -45,7 +57,7 @@ impl Evaluator {
                 span: _,
             } => {
                 if self.context.contains_key(&name) {
-                    Emitter::stderr(ColorConfig::Always, Some(&self.codemap)).emit(&[
+                    self.emitter.emit(&[
                         Diagnostic {
                             level: Level::Error,
                             message: "trying to redefine existing variable".to_owned(),
@@ -78,7 +90,19 @@ impl Evaluator {
                             }],
                             code: Some("N003".to_owned()),
                         },
+                        Diagnostic {
+                            level: Level::Note,
+                            message: "consider renaming the variable".to_owned(),
+                            spans: vec![SpanLabel {
+                                span: self.logos_to_codemap_span(&name_span),
+                                style: SpanStyle::Primary,
+                                label: Some(format!("rename `{}` here", name).to_owned()),
+                            }],
+                            code: Some("N003".to_owned()),
+                        },
                     ]);
+
+                    return false;
                 }
 
                 self.context
@@ -86,6 +110,8 @@ impl Evaluator {
             }
             _ => {}
         }
+
+        true
     }
 
     fn logos_to_codemap_span(&self, logos_span: &ast::Span) -> codemap::Span {
